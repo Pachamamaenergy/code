@@ -1,0 +1,176 @@
+import matplotlib
+matplotlib.use('Agg')
+
+import pvlib
+import pandas as pd
+import numpy as np
+
+# -------------------------
+# 1. Location
+# -------------------------
+latitude = -17.3895
+longitude = -66.1568
+tz = "America/La_Paz"
+
+location = pvlib.location.Location(latitude, longitude, tz=tz)
+
+# -------------------------
+# 2. PV system
+# -------------------------
+num_panels = 30
+panel_power_w = 400  # W
+system_size_kwp = (num_panels * panel_power_w) / 1000
+
+# -------------------------
+# 3. Weather data
+# -------------------------
+weather, meta = pvlib.iotools.get_pvgis_tmy(
+    latitude,
+    longitude,
+    outputformat="json"
+)
+
+weather["temp_air"] = weather.get("temp_air", 25)
+weather["wind_speed"] = weather.get("wind_speed", 1)
+
+weather.index = pd.to_datetime(weather.index)
+
+if weather.index.tz is None:
+    weather = weather.tz_localize(tz)
+else:
+    weather = weather.tz_convert(tz)
+
+# -------------------------
+# 4. Temperature model
+# -------------------------
+temperature_model_parameters = pvlib.temperature.TEMPERATURE_MODEL_PARAMETERS[
+    "sapm"
+]["open_rack_glass_polymer"]
+
+# -------------------------
+# 5. PV system
+# -------------------------
+system = pvlib.pvsystem.PVSystem(
+    surface_tilt=20,
+    surface_azimuth=0,
+    module_parameters={
+        "pdc0": system_size_kwp * 1000,
+        "gamma_pdc": -0.0035
+    },
+    inverter_parameters={
+        "pdc0": system_size_kwp * 1000
+    },
+    temperature_model_parameters=temperature_model_parameters
+)
+
+mc = pvlib.modelchain.ModelChain(
+    system,
+    location,
+    aoi_model="physical",
+    spectral_model="no_loss"
+)
+
+mc.run_model(weather)
+
+# -------------------------
+# 6. PV production
+# -------------------------
+ac_power = mc.results.ac.fillna(0)
+
+ac_power = ac_power.copy()
+ac_power.index = ac_power.index.tz_convert(None)
+ac_power.index = ac_power.index.map(lambda dt: dt.replace(year=2025))
+ac_power = ac_power.sort_index()
+
+pv_hourly_kwh = ac_power / 1000
+pv_daily = pv_hourly_kwh.resample("D").sum()
+
+# -------------------------
+# 7. Demand
+# -------------------------
+monthly_profile = {
+    1: 59.3, 2: 59.1, 3: 59.1, 4: 58.5,
+    5: 57.3, 6: 56.8, 7: 56.8, 8: 57.3,
+    9: 58.2, 10: 58.8, 11: 59.3, 12: 59.3
+}
+
+demand_series = pd.Series(
+    [monthly_profile[d.month] for d in pv_daily.index],
+    index=pv_daily.index
+)
+
+# -------------------------
+# 8. Backup generator
+# -------------------------
+diesel_price = 0.145  # $/kWh
+
+backup_needed = (demand_series - pv_daily).clip(lower=0)
+annual_demand = demand_series.sum()
+annual_backup = backup_needed.sum()
+
+# -------------------------
+# 9. Cost parameters
+# -------------------------
+simulation_years = 25
+price_growth = 0.05
+
+capex_per_w = 1.78
+pv_investment = system_size_kwp * 1000 * capex_per_w
+
+om_per_kw_year = 19
+annual_om_cost = system_size_kwp * om_per_kw_year
+
+battery_unit_cost = 3757
+battery_investment_small = battery_unit_cost * 37
+
+daily_avg_demand = demand_series.mean()
+battery_investment_large = (daily_avg_demand / 0.8) * 110
+
+# -------------------------
+# 10. Cost model (FIXED)
+# -------------------------
+years = np.arange(1, simulation_years + 1)
+costs = pd.DataFrame(index=years)
+
+bau_annual = []
+backup_annual = []
+
+for year in years:
+    factor = (1 + price_growth) ** (year - 1)
+
+    bau_annual.append(annual_demand * diesel_price * factor)
+    backup_annual.append(annual_backup * diesel_price * factor)
+
+# ---- CUMULATIVE ----
+costs["BAU"] = np.cumsum(bau_annual)
+
+# PV + small batteries
+pv_small_annual = np.array(backup_annual) + annual_om_cost
+costs["PV_37_batteries"] = (
+    pv_investment +
+    battery_investment_small +
+    np.cumsum(pv_small_annual)
+)
+
+# PV + large battery
+pv_large_annual = np.array(backup_annual) + annual_om_cost
+costs["PV_large_battery"] = (
+    pv_investment +
+    battery_investment_large +
+    np.cumsum(pv_large_annual)
+)
+
+# -------------------------
+# 11. Export
+# -------------------------
+with pd.ExcelWriter("drone_energy_analysis.xlsx") as writer:
+    
+    pd.DataFrame({
+        "Demand_kWh": demand_series,
+        "PV_kWh": pv_daily,
+        "Backup_kWh": backup_needed
+    }).to_excel(writer, sheet_name="Daily_Energy")
+    
+    costs.to_excel(writer, sheet_name="Cost_Simulation")
+
+print("Excel file created: drone_energy_analysis.xlsx")
