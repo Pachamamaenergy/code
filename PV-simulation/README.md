@@ -1,5 +1,5 @@
 # PV Simulation & Cost Analysis
-# Overview
+# Overview 
 
 This script simulates the energy production of a photovoltaic (PV) system using weather data and evaluates its economic performance over 25 years. It compares a Business-As-Usual (BAU) electricity scenario with two alternatives: PV with net metering and PV combined with battery storage.
 
