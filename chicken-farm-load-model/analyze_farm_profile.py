@@ -291,37 +291,96 @@ month_df = results_df[
     (results_df["datetime"] <  f"{YEAR}-02-01 00:00:00")
 ]
 
+
 # =========================
-# ONE FIGURE WITH 4 SUBPLOTS
+# ONE FIGURE WITH 3 SUBPLOTS
 # =========================
 
-fig, axes = plt.subplots(4, 1, figsize=(14, 16))
+import matplotlib.dates as mdates
 
-# One day
-axes[0].plot(day_df["datetime"], day_df["power_kW"])
-axes[0].set_title("Chicken Farm Load Profile - One Day")
+# Prepare cleaner month labels
+monthly_energy_plot = monthly_energy.copy()
+monthly_energy_plot["month_dt"] = pd.to_datetime(monthly_energy_plot["month"])
+monthly_energy_plot["month_label"] = monthly_energy_plot["month_dt"].dt.strftime("%b")
+
+# Create daily energy for full year (for clean yearly plot)
+year_daily_energy = (
+    results_df
+    .set_index("datetime")
+    .resample("D")["energy_kWh"]
+    .sum()
+    .reset_index()
+)
+
+# Global style
+plt.rcParams.update({
+    "font.size": 11,
+    "axes.titlesize": 14,
+    "axes.labelsize": 12,
+})
+
+fig, axes = plt.subplots(
+    3, 1,
+    figsize=(14, 12),
+    constrained_layout=True
+)
+
+# -------------------------
+# 1) One day
+# -------------------------
+axes[0].plot(
+    day_df["datetime"],
+    day_df["power_kW"],
+    linewidth=2.0
+)
+axes[0].set_title("Chicken Farm Load Profile — One Day", pad=12)
 axes[0].set_xlabel("Time")
 axes[0].set_ylabel("Power (kW)")
+axes[0].grid(True, alpha=0.3)
 
-# One week
-axes[1].plot(week_df["datetime"], week_df["power_kW"])
-axes[1].set_title("Chicken Farm Load Profile - One Week")
-axes[1].set_xlabel("Time")
+axes[0].xaxis.set_major_locator(mdates.HourLocator(interval=3))
+axes[0].xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+axes[0].margins(x=0.01)
+
+# -------------------------
+# 2) One month
+# -------------------------
+axes[1].plot(
+    month_df["datetime"],
+    month_df["power_kW"],
+    linewidth=1.8
+)
+axes[1].set_title("Chicken Farm Load Profile — One Month", pad=12)
+axes[1].set_xlabel("Date")
 axes[1].set_ylabel("Power (kW)")
+axes[1].grid(True, alpha=0.3)
 
-# One month
-axes[2].plot(month_df["datetime"], month_df["power_kW"])
-axes[2].set_title("Chicken Farm Load Profile - One Month")
-axes[2].set_xlabel("Time")
-axes[2].set_ylabel("Power (kW)")
+axes[1].xaxis.set_major_locator(mdates.DayLocator(interval=4))
+axes[1].xaxis.set_major_formatter(mdates.DateFormatter("%b %d"))
+axes[1].margins(x=0.01)
 
-# Monthly energy
-axes[3].bar(monthly_energy["month"], monthly_energy["energy_kWh"])
-axes[3].set_title("Monthly Energy Consumption")
-axes[3].set_xlabel("Month")
-axes[3].set_ylabel("Energy (kWh)")
-axes[3].tick_params(axis="x", rotation=45)
+# -------------------------
+# 3) One year (daily energy)
+# -------------------------
+axes[2].plot(
+    year_daily_energy["datetime"],
+    year_daily_energy["energy_kWh"],
+    linewidth=1.8
+)
+axes[2].set_title("Daily Energy Consumption — One Year", pad=12)
+axes[2].set_xlabel("Month")
+axes[2].set_ylabel("Energy (kWh)")
+axes[2].grid(True, alpha=0.3)
 
-plt.tight_layout()
-plt.savefig("farm_combined_plots.png", dpi=300)
+axes[2].xaxis.set_major_locator(mdates.MonthLocator(interval=1))
+axes[2].xaxis.set_major_formatter(mdates.DateFormatter("%b"))
+axes[2].margins(x=0.01)
+
+# Clean look
+for ax in axes:
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+# Save
+plt.savefig("farm_combined_plots.png", dpi=300, bbox_inches="tight")
 plt.show()
